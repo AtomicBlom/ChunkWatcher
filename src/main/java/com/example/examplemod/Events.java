@@ -6,8 +6,11 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
+import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.IChunkProvider;
 import net.minecraft.world.gen.ChunkProviderServer;
@@ -16,9 +19,9 @@ import net.minecraftforge.event.world.WorldEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import net.minecraftforge.fml.relauncher.Side;
 import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,10 +43,10 @@ public class Events
     private static HashMap<Integer, String> causes = Maps.newHashMap();
     private static Integer currentCause;
     private static int nextCauseIndex;
-    private static StackTraceElement[] elements;
-    public static boolean watching;
+    private static Throwable elements;
+    public static boolean watching = false;
 
-    public static void setCauseOfChunkLoad(StackTraceElement[] elements) {
+    public static void setCauseOfChunkLoad(Throwable elements) {
         Events.elements = elements;
     }
 
@@ -75,12 +78,49 @@ public class Events
         return true;
     }
 
-    public static void onWorldTickStart(TickEvent.ServerTickEvent event) {
-        if (event.phase == TickEvent.Phase.START)
-        {
-            causeOfChunkLoad.clear();
+    private static Field tileEntitiesToBeRemoved = null;
+    private static HashMap<Integer, Set<BlockPos>> lastTickTileEntities = Maps.newHashMap();
+
+    @SubscribeEvent
+    public static void onWorldTick(TickEvent.WorldTickEvent event) throws NoSuchFieldException, IllegalAccessException
+    {
+        if (event.side == Side.SERVER && event.phase == TickEvent.Phase.START) {
+            Class aClass = WorldServer.class;
+            tileEntitiesToBeRemoved = getField(aClass, "tileEntitiesToBeRemoved");
+            if (tileEntitiesToBeRemoved == null) {
+                tileEntitiesToBeRemoved = getField(aClass, "field_147483_b");
+            }
+            if (tileEntitiesToBeRemoved == null) {
+                throw new NoSuchFieldException("tileEntitiesToBeRemoved (deObf)/ field_147483_b (obf)");
+            }
+            final List<TileEntity> tileEntitiesToRemove = (List<TileEntity>)tileEntitiesToBeRemoved.get(event.world);
+
+            Set<BlockPos> tileEntitiesToExamine = lastTickTileEntities.get(event.world.provider.getDimension());
+            if (tileEntitiesToExamine == null) {
+                tileEntitiesToExamine = Sets.newHashSet();
+            }
+
+            Set<BlockPos> nextSet = Sets.newHashSet();
+            boolean found = false;
+            int searched = 0;
+            for (final TileEntity tileEntity : tileEntitiesToRemove)
+            {
+                final BlockPos pos = tileEntity.getPos();
+                if (searched < 1024 && tileEntitiesToExamine.contains(pos)) {
+                    found = true;
+                }
+                searched++;
+                nextSet.add(pos);
+            }
+
+            if (found) {
+                Logger.severe("Warning there are tile entities that are not being removed from the world.");
+            }
+
+            lastTickTileEntities.put(event.world.provider.getDimension(), nextSet);
         }
     }
+
 
     @SubscribeEvent
     public static void onChunkLoadedEvent(ChunkEvent.Load event) throws ExecutionException
@@ -90,7 +130,7 @@ public class Events
         {
 
             StringBuilder stackTrace = new StringBuilder();
-            for (final StackTraceElement element : elements)
+            for (final StackTraceElement element : elements.getStackTrace())
             {
                 if (!shouldLog(element)) continue;
 

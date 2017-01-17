@@ -4,7 +4,6 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.IChunkProvider;
 import net.minecraft.world.gen.ChunkProviderServer;
 import javax.annotation.Nullable;
-import java.util.Arrays;
 
 public class AltChunkProvider extends ChunkProviderServer
 {
@@ -22,7 +21,7 @@ public class AltChunkProvider extends ChunkProviderServer
     {
         if (Events.watching)
         {
-            Events.setCauseOfChunkLoad(new Throwable().getStackTrace());
+            Events.setCauseOfChunkLoad(new Throwable());
         }
 
         return super.loadChunk(x, z, runnable);
